@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dicom-legacy-converter"
+version = "0.1.0"
+description = "Convert Enhanced MR multi-frame DICOM objects into classic single-frame MR DICOM files."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+  { name = "CREST imaging team" }
+]
+dependencies = [
+  "numpy>=1.24",
+  "pydicom>=3.0"
+]
+
+[project.optional-dependencies]
+test = [
+  "pytest>=8"
+]
+
+[project.scripts]
+dicom-legacy = "dicom_legacy_converter.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
