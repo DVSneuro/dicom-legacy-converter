@@ -72,7 +72,54 @@ def test_progress_callback_reports_sources_and_frames(tmp_path: Path) -> None:
     assert "enhanced.dcm frames: 100% (10/10)" in messages
 
 
-def _write_synthetic_enhanced_mr(path: Path, *, frame_count: int) -> None:
+def test_skip_bold_uses_series_metadata(tmp_path: Path) -> None:
+    source = tmp_path / "enhanced.dcm"
+    _write_synthetic_enhanced_mr(
+        source,
+        frame_count=4,
+        series_description="resting state BOLD",
+        protocol_name="rfMRI_REST",
+    )
+
+    results = convert_path(source, tmp_path / "out", skip_bold=True)
+
+    assert len(results) == 1
+    assert not results[0].converted
+    assert results[0].message == "skipped likely BOLD/fMRI series"
+    assert not (tmp_path / "out").exists()
+
+
+def test_max_series_frames_skips_combined_original_series(tmp_path: Path) -> None:
+    input_dir = tmp_path / "input"
+    input_dir.mkdir()
+    series_uid = generate_uid()
+    _write_synthetic_enhanced_mr(
+        input_dir / "enhanced_a.dcm",
+        frame_count=6,
+        series_uid=series_uid,
+    )
+    _write_synthetic_enhanced_mr(
+        input_dir / "enhanced_b.dcm",
+        frame_count=6,
+        series_uid=series_uid,
+    )
+
+    results = convert_path(input_dir, tmp_path / "out", max_series_frames=10)
+
+    assert len(results) == 2
+    assert all(not result.converted for result in results)
+    assert all("skipped series with 12 output frame(s)" in result.message for result in results)
+    assert not (tmp_path / "out").exists()
+
+
+def _write_synthetic_enhanced_mr(
+    path: Path,
+    *,
+    frame_count: int,
+    series_uid: str | None = None,
+    series_description: str = "Synthetic T1",
+    protocol_name: str | None = None,
+) -> None:
     pixels = np.arange(frame_count * 2 * 2, dtype=np.uint16).reshape(frame_count, 2, 2)
 
     file_meta = FileMetaDataset()
@@ -86,13 +133,15 @@ def _write_synthetic_enhanced_mr(path: Path, *, frame_count: int) -> None:
     ds.SOPClassUID = ENHANCED_MR_IMAGE_STORAGE
     ds.SOPInstanceUID = file_meta.MediaStorageSOPInstanceUID
     ds.StudyInstanceUID = generate_uid()
-    ds.SeriesInstanceUID = generate_uid()
+    ds.SeriesInstanceUID = series_uid or generate_uid()
     ds.PatientName = "Test^Enhanced"
     ds.PatientID = "TEST001"
     ds.Modality = "MR"
     ds.StudyDate = "20260613"
     ds.StudyTime = "120000"
-    ds.SeriesDescription = "Synthetic T1"
+    ds.SeriesDescription = series_description
+    if protocol_name is not None:
+        ds.ProtocolName = protocol_name
     ds.NumberOfFrames = frame_count
     ds.Rows = 2
     ds.Columns = 2

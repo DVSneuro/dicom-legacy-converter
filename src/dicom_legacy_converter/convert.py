@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import re
 import shutil
 from dataclasses import dataclass
 from datetime import datetime
@@ -31,6 +32,10 @@ ENHANCED_ONLY_KEYWORDS = (
 )
 
 ProgressCallback = Callable[[str], None]
+LIKELY_BOLD_PATTERN = re.compile(
+    r"(^|[^a-z0-9])(bold|fmri|resting|rest|task|ep2d|mbep2d|sbref)([^a-z0-9]|$)",
+    re.IGNORECASE,
+)
 
 
 class ConversionError(RuntimeError):
@@ -45,6 +50,17 @@ class ConversionResult:
     message: str
 
 
+@dataclass(frozen=True)
+class _SourceRecord:
+    source: Path
+    ds: Dataset | None
+    enhanced_mr: bool
+    frame_count: int
+    series_uid: str
+    series_description: str
+    metadata_text: str
+
+
 def convert_path(
     input_path: str | Path,
     output_dir: str | Path,
@@ -55,6 +71,10 @@ def convert_path(
     copy_single_frame: bool = False,
     progress: ProgressCallback | None = None,
     progress_interval: int = 10,
+    dry_run: bool = False,
+    skip_bold: bool = False,
+    exclude_regex: str | None = None,
+    max_series_frames: int | None = None,
 ) -> list[ConversionResult]:
     """Convert Enhanced MR DICOM files found at *input_path*.
 
@@ -76,41 +96,97 @@ def convert_path(
         Optional callback that receives progress messages.
     progress_interval
         Percentage interval for progress messages.
+    dry_run
+        If true, report what would happen without writing output files.
+    skip_bold
+        If true, skip series whose path or metadata look like BOLD/fMRI data.
+    exclude_regex
+        Optional regular expression matched against source paths and selected
+        metadata. Matching sources are skipped.
+    max_series_frames
+        If set, skip any original DICOM series that would produce more than
+        this many output single-frame instances across all source files.
     """
 
     input_path = Path(input_path)
     output_dir = Path(output_dir)
     if not input_path.exists():
         raise ConversionError(f"Input path does not exist: {input_path}")
+    if max_series_frames is not None and max_series_frames < 1:
+        raise ConversionError("--max-series-frames must be at least 1")
 
-    output_dir.mkdir(parents=True, exist_ok=True)
     results: list[ConversionResult] = []
     sources = list(_iter_input_files(input_path, recursive=recursive))
 
     if progress is not None:
         progress(f"Found {len(sources)} source file(s).")
 
-    source_progress = _ProgressReporter(
+    exclude_pattern = _compile_regex(exclude_regex)
+
+    scan_progress = _ProgressReporter(
         total=len(sources),
+        label="metadata scan",
+        callback=progress,
+        interval=progress_interval,
+    )
+    scan_progress.start()
+
+    records: list[_SourceRecord] = []
+    for index, source in enumerate(sources, start=1):
+        ds = _read_dicom_or_none(source, force=force, stop_before_pixels=True)
+        records.append(_build_source_record(source, ds))
+        scan_progress.advance(index)
+
+    series_frames = _series_frame_totals(records)
+    series_sources = _series_source_totals(records)
+    _report_enhanced_series_summary(records, series_frames, series_sources, progress)
+
+    source_progress = _ProgressReporter(
+        total=len(records),
         label="source files",
         callback=progress,
         interval=progress_interval,
     )
     source_progress.start()
 
-    for index, source in enumerate(sources, start=1):
-        ds = _read_dicom_or_none(source, force=force)
-        if ds is None:
+    for index, record in enumerate(records, start=1):
+        if record.ds is None:
             results.append(
-                ConversionResult(source, False, tuple(), "not a readable DICOM file")
+                ConversionResult(record.source, False, tuple(), "not a readable DICOM file")
             )
             source_progress.advance(index)
             continue
 
-        if is_enhanced_mr(ds):
+        skip_reason = _skip_reason(
+            record,
+            series_frames=series_frames,
+            series_sources=series_sources,
+            skip_bold=skip_bold,
+            exclude_pattern=exclude_pattern,
+            max_series_frames=max_series_frames,
+        )
+        if skip_reason is not None:
+            results.append(ConversionResult(record.source, False, tuple(), skip_reason))
+            source_progress.advance(index)
+            continue
+
+        if record.enhanced_mr:
+            if dry_run:
+                results.append(
+                    ConversionResult(
+                        record.source,
+                        False,
+                        tuple(),
+                        f"would write {record.frame_count} classic MR instance(s)",
+                    )
+                )
+                source_progress.advance(index)
+                continue
+
+            ds = pydicom.dcmread(record.source, force=force)
             files = split_enhanced_mr_dataset(
                 ds,
-                source,
+                record.source,
                 output_dir,
                 overwrite=overwrite,
                 progress=progress,
@@ -118,7 +194,7 @@ def convert_path(
             )
             results.append(
                 ConversionResult(
-                    source,
+                    record.source,
                     True,
                     tuple(files),
                     f"wrote {len(files)} classic MR instance(s)",
@@ -128,14 +204,29 @@ def convert_path(
             continue
 
         if copy_single_frame:
-            copied = _copy_single_frame(source, output_dir, overwrite=overwrite)
-            results.append(
-                ConversionResult(source, True, (copied,), "copied existing single-frame DICOM")
-            )
+            if dry_run:
+                results.append(
+                    ConversionResult(
+                        record.source,
+                        False,
+                        tuple(),
+                        "would copy existing single-frame DICOM",
+                    )
+                )
+            else:
+                copied = _copy_single_frame(record.source, output_dir, overwrite=overwrite)
+                results.append(
+                    ConversionResult(
+                        record.source,
+                        True,
+                        (copied,),
+                        "copied existing single-frame DICOM",
+                    )
+                )
         else:
-            sop_class = str(ds.get("SOPClassUID", "unknown SOP class"))
+            sop_class = str(record.ds.get("SOPClassUID", "unknown SOP class"))
             results.append(
-                ConversionResult(source, False, tuple(), f"not Enhanced MR ({sop_class})")
+                ConversionResult(record.source, False, tuple(), f"not Enhanced MR ({sop_class})")
             )
         source_progress.advance(index)
 
@@ -486,14 +577,157 @@ def _iter_input_files(input_path: Path, *, recursive: bool) -> Iterable[Path]:
             yield path
 
 
-def _read_dicom_or_none(source: Path, *, force: bool) -> Dataset | None:
+def _build_source_record(source: Path, ds: Dataset | None) -> _SourceRecord:
+    if ds is None:
+        return _SourceRecord(
+            source=source,
+            ds=None,
+            enhanced_mr=False,
+            frame_count=0,
+            series_uid="",
+            series_description="",
+            metadata_text=str(source),
+        )
+
+    enhanced = is_enhanced_mr(ds)
+    series_uid = str(ds.get("SeriesInstanceUID", "")) or str(source)
+    series_description = str(ds.get("SeriesDescription", ""))
+    return _SourceRecord(
+        source=source,
+        ds=ds,
+        enhanced_mr=enhanced,
+        frame_count=_frame_count(ds) if enhanced else 1,
+        series_uid=series_uid,
+        series_description=series_description,
+        metadata_text=_metadata_text(source, ds),
+    )
+
+
+def _metadata_text(source: Path, ds: Dataset) -> str:
+    keywords = (
+        "StudyDescription",
+        "SeriesDescription",
+        "ProtocolName",
+        "SequenceName",
+        "ImageType",
+        "SeriesNumber",
+        "BodyPartExamined",
+        "ScanningSequence",
+        "SequenceVariant",
+        "MRAcquisitionType",
+    )
+    values = [str(source)]
+    for keyword in keywords:
+        if hasattr(ds, keyword):
+            values.append(str(getattr(ds, keyword)))
+    return "\n".join(values)
+
+
+def _series_frame_totals(records: Iterable[_SourceRecord]) -> dict[str, int]:
+    totals: dict[str, int] = {}
+    for record in records:
+        if not record.enhanced_mr:
+            continue
+        totals[record.series_uid] = totals.get(record.series_uid, 0) + record.frame_count
+    return totals
+
+
+def _series_source_totals(records: Iterable[_SourceRecord]) -> dict[str, int]:
+    totals: dict[str, int] = {}
+    for record in records:
+        if not record.enhanced_mr:
+            continue
+        totals[record.series_uid] = totals.get(record.series_uid, 0) + 1
+    return totals
+
+
+def _report_enhanced_series_summary(
+    records: Iterable[_SourceRecord],
+    series_frames: dict[str, int],
+    series_sources: dict[str, int],
+    progress: ProgressCallback | None,
+) -> None:
+    if progress is None:
+        return
+
+    enhanced_records = [record for record in records if record.enhanced_mr]
+    if not enhanced_records:
+        progress("Detected 0 Enhanced MR source file(s).")
+        return
+
+    progress(
+        "Detected "
+        f"{len(enhanced_records)} Enhanced MR source file(s) across "
+        f"{len(series_frames)} original series."
+    )
+
+    descriptions: dict[str, str] = {}
+    for record in enhanced_records:
+        descriptions.setdefault(record.series_uid, record.series_description)
+
+    largest = sorted(series_frames.items(), key=lambda item: item[1], reverse=True)[:10]
+    for uid, frame_total in largest:
+        description = descriptions.get(uid) or uid
+        progress(
+            "series summary: "
+            f"{description} - {series_sources.get(uid, 0)} source file(s), "
+            f"{frame_total} output frame(s)"
+        )
+
+
+def _skip_reason(
+    record: _SourceRecord,
+    *,
+    series_frames: dict[str, int],
+    series_sources: dict[str, int],
+    skip_bold: bool,
+    exclude_pattern: re.Pattern[str] | None,
+    max_series_frames: int | None,
+) -> str | None:
+    if exclude_pattern is not None and exclude_pattern.search(record.metadata_text):
+        return f"matched exclude regex: {exclude_pattern.pattern}"
+
+    if skip_bold and LIKELY_BOLD_PATTERN.search(record.metadata_text):
+        return "skipped likely BOLD/fMRI series"
+
+    if (
+        max_series_frames is not None
+        and record.enhanced_mr
+        and series_frames.get(record.series_uid, 0) > max_series_frames
+    ):
+        frame_total = series_frames.get(record.series_uid, 0)
+        source_total = series_sources.get(record.series_uid, 0)
+        return (
+            f"skipped series with {frame_total} output frame(s) across "
+            f"{source_total} source file(s) (limit {max_series_frames})"
+        )
+
+    return None
+
+
+def _compile_regex(pattern: str | None) -> re.Pattern[str] | None:
+    if pattern is None:
+        return None
     try:
-        return pydicom.dcmread(source, force=force)
+        return re.compile(pattern, re.IGNORECASE)
+    except re.error as exc:
+        raise ConversionError(f"Invalid exclude regex {pattern!r}: {exc}") from exc
+
+
+def _read_dicom_or_none(
+    source: Path,
+    *,
+    force: bool,
+    stop_before_pixels: bool = False,
+) -> Dataset | None:
+    try:
+        return pydicom.dcmread(source, force=force, stop_before_pixels=stop_before_pixels)
     except (InvalidDicomError, IsADirectoryError, PermissionError):
         return None
 
 
 def _copy_single_frame(source: Path, output_dir: Path, *, overwrite: bool) -> Path:
+    output_dir.mkdir(parents=True, exist_ok=True)
     target = output_dir / source.name
     if target.exists() and not overwrite:
         raise ConversionError(

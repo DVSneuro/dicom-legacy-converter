@@ -75,6 +75,35 @@ dicom-legacy /path/to/scanner_export /path/to/output_dir --recursive --progress-
 dicom-legacy /path/to/scanner_export /path/to/output_dir --recursive --quiet
 ```
 
+For a large scanner export, start with a dry run:
+
+```bash
+dicom-legacy /path/to/scanner_export /path/to/output_dir --recursive --dry-run
+```
+
+The dry run reports Enhanced MR source files grouped by original DICOM series.
+This helps catch functional runs that would expand into thousands of output
+files.
+
+Skip likely BOLD/fMRI/rest/task series:
+
+```bash
+dicom-legacy /path/to/scanner_export /path/to/output_dir --recursive --skip-bold
+```
+
+Skip any source whose path or selected DICOM metadata match a custom pattern:
+
+```bash
+dicom-legacy /path/to/scanner_export /path/to/output_dir --recursive --exclude-regex "bold|fmri|rest|task"
+```
+
+Skip original DICOM series that would generate more than a chosen number of
+single-frame output files:
+
+```bash
+dicom-legacy /path/to/scanner_export /path/to/output_dir --recursive --max-series-frames 300
+```
+
 By default, existing output files are not overwritten:
 
 ```bash

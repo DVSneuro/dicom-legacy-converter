@@ -38,6 +38,30 @@ def build_parser() -> argparse.ArgumentParser:
         help="Copy classic single-frame DICOMs into the output directory too",
     )
     parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Scan inputs and report what would be converted without writing files",
+    )
+    parser.add_argument(
+        "--skip-bold",
+        action="store_true",
+        help="Skip series whose path or metadata look like BOLD/fMRI/rest/task data",
+    )
+    parser.add_argument(
+        "--exclude-regex",
+        metavar="REGEX",
+        help="Skip inputs whose path or selected DICOM metadata match REGEX",
+    )
+    parser.add_argument(
+        "--max-series-frames",
+        type=int,
+        metavar="N",
+        help=(
+            "Skip original DICOM series that would produce more than N "
+            "single-frame output files"
+        ),
+    )
+    parser.add_argument(
         "--progress-interval",
         type=int,
         default=10,
@@ -66,6 +90,10 @@ def main(argv: list[str] | None = None) -> int:
             copy_single_frame=args.copy_single_frame,
             progress=None if args.quiet else _print_progress,
             progress_interval=args.progress_interval,
+            dry_run=args.dry_run,
+            skip_bold=args.skip_bold,
+            exclude_regex=args.exclude_regex,
+            max_series_frames=args.max_series_frames,
         )
     except ConversionError as exc:
         parser.error(str(exc))
@@ -76,10 +104,21 @@ def main(argv: list[str] | None = None) -> int:
         if result.converted:
             converted_count += 1
             output_count += len(result.output_files)
-        status = "converted" if result.converted else "skipped"
+        if result.converted:
+            status = "converted"
+        elif result.message.startswith("would "):
+            status = "would convert"
+        else:
+            status = "skipped"
         print(f"{status}: {result.source} - {result.message}")
 
-    print(f"Done. Converted {converted_count} source file(s) into {output_count} DICOM file(s).")
+    if args.dry_run:
+        print("Dry run complete. No files were written.")
+    else:
+        print(
+            f"Done. Converted {converted_count} source file(s) "
+            f"into {output_count} DICOM file(s)."
+        )
     return 0
 
 
