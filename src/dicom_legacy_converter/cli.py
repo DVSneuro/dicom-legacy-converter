@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 
 from .convert import ConversionError, convert_path
@@ -36,6 +37,18 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Copy classic single-frame DICOMs into the output directory too",
     )
+    parser.add_argument(
+        "--progress-interval",
+        type=int,
+        default=10,
+        metavar="PERCENT",
+        help="Report progress every PERCENT percent (default: 10)",
+    )
+    parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help="Suppress progress updates",
+    )
     return parser
 
 
@@ -51,6 +64,8 @@ def main(argv: list[str] | None = None) -> int:
             overwrite=args.overwrite,
             force=args.force,
             copy_single_frame=args.copy_single_frame,
+            progress=None if args.quiet else _print_progress,
+            progress_interval=args.progress_interval,
         )
     except ConversionError as exc:
         parser.error(str(exc))
@@ -68,6 +83,9 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
+def _print_progress(message: str) -> None:
+    print(message, file=sys.stderr, flush=True)
+
+
 if __name__ == "__main__":
     raise SystemExit(main())
-

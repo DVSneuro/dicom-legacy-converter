@@ -57,6 +57,24 @@ Convert every DICOM found under a folder:
 dicom-legacy /path/to/scanner_export /path/to/output_dir --recursive
 ```
 
+The CLI reports progress to stderr by default. It reports source-file progress
+and, for Enhanced MR files, frame-writing progress:
+
+```text
+Found 1 source file(s).
+source files: 0% (0/1)
+enhanced_mr.dcm: decoding pixel data (208 frame(s)).
+enhanced_mr.dcm frames: 0% (0/208)
+enhanced_mr.dcm frames: 10% (21/208)
+```
+
+Change the reporting interval or silence progress updates:
+
+```bash
+dicom-legacy /path/to/scanner_export /path/to/output_dir --recursive --progress-interval 5
+dicom-legacy /path/to/scanner_export /path/to/output_dir --recursive --quiet
+```
+
 By default, existing output files are not overwritten:
 
 ```bash

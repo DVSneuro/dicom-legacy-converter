@@ -5,7 +5,7 @@ import shutil
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Iterable
+from typing import Callable, Iterable
 
 import numpy as np
 import pydicom
@@ -30,6 +30,8 @@ ENHANCED_ONLY_KEYWORDS = (
     "RepresentativeFrameNumber",
 )
 
+ProgressCallback = Callable[[str], None]
+
 
 class ConversionError(RuntimeError):
     """Raised when a DICOM file cannot be converted safely."""
@@ -51,6 +53,8 @@ def convert_path(
     overwrite: bool = False,
     force: bool = False,
     copy_single_frame: bool = False,
+    progress: ProgressCallback | None = None,
+    progress_interval: int = 10,
 ) -> list[ConversionResult]:
     """Convert Enhanced MR DICOM files found at *input_path*.
 
@@ -68,6 +72,10 @@ def convert_path(
         If true, pass ``force=True`` to ``pydicom.dcmread``.
     copy_single_frame
         If true, copy non-enhanced DICOM files into the output directory.
+    progress
+        Optional callback that receives progress messages.
+    progress_interval
+        Percentage interval for progress messages.
     """
 
     input_path = Path(input_path)
@@ -77,13 +85,26 @@ def convert_path(
 
     output_dir.mkdir(parents=True, exist_ok=True)
     results: list[ConversionResult] = []
+    sources = list(_iter_input_files(input_path, recursive=recursive))
 
-    for source in _iter_input_files(input_path, recursive=recursive):
+    if progress is not None:
+        progress(f"Found {len(sources)} source file(s).")
+
+    source_progress = _ProgressReporter(
+        total=len(sources),
+        label="source files",
+        callback=progress,
+        interval=progress_interval,
+    )
+    source_progress.start()
+
+    for index, source in enumerate(sources, start=1):
         ds = _read_dicom_or_none(source, force=force)
         if ds is None:
             results.append(
                 ConversionResult(source, False, tuple(), "not a readable DICOM file")
             )
+            source_progress.advance(index)
             continue
 
         if is_enhanced_mr(ds):
@@ -92,6 +113,8 @@ def convert_path(
                 source,
                 output_dir,
                 overwrite=overwrite,
+                progress=progress,
+                progress_interval=progress_interval,
             )
             results.append(
                 ConversionResult(
@@ -101,6 +124,7 @@ def convert_path(
                     f"wrote {len(files)} classic MR instance(s)",
                 )
             )
+            source_progress.advance(index)
             continue
 
         if copy_single_frame:
@@ -113,6 +137,7 @@ def convert_path(
             results.append(
                 ConversionResult(source, False, tuple(), f"not Enhanced MR ({sop_class})")
             )
+        source_progress.advance(index)
 
     return results
 
@@ -123,12 +148,21 @@ def split_enhanced_mr_file(
     *,
     overwrite: bool = False,
     force: bool = False,
+    progress: ProgressCallback | None = None,
+    progress_interval: int = 10,
 ) -> list[Path]:
     """Split one Enhanced MR file into classic single-frame MR DICOM files."""
 
     source = Path(source)
     ds = pydicom.dcmread(source, force=force)
-    return split_enhanced_mr_dataset(ds, source, Path(output_dir), overwrite=overwrite)
+    return split_enhanced_mr_dataset(
+        ds,
+        source,
+        Path(output_dir),
+        overwrite=overwrite,
+        progress=progress,
+        progress_interval=progress_interval,
+    )
 
 
 def split_enhanced_mr_dataset(
@@ -137,6 +171,8 @@ def split_enhanced_mr_dataset(
     output_dir: Path,
     *,
     overwrite: bool = False,
+    progress: ProgressCallback | None = None,
+    progress_interval: int = 10,
 ) -> list[Path]:
     if not is_enhanced_mr(ds):
         raise ConversionError(f"Not an Enhanced MR object: {source}")
@@ -144,6 +180,9 @@ def split_enhanced_mr_dataset(
     frame_count = _frame_count(ds)
     if frame_count < 1:
         raise ConversionError(f"Enhanced MR object has no frames: {source}")
+
+    if progress is not None:
+        progress(f"{source.name}: decoding pixel data ({frame_count} frame(s)).")
 
     try:
         pixel_array = ds.pixel_array
@@ -159,6 +198,13 @@ def split_enhanced_mr_dataset(
 
     output_files: list[Path] = []
     now = datetime.now()
+    frame_progress = _ProgressReporter(
+        total=frame_count,
+        label=f"{source.name} frames",
+        callback=progress,
+        interval=progress_interval,
+    )
+    frame_progress.start()
     for frame_index in range(frame_count):
         out = _build_single_frame_dataset(
             ds,
@@ -176,6 +222,7 @@ def split_enhanced_mr_dataset(
 
         out.save_as(target, enforce_file_format=True)
         output_files.append(target)
+        frame_progress.advance(frame_index + 1)
 
     return output_files
 
@@ -454,6 +501,45 @@ def _copy_single_frame(source: Path, output_dir: Path, *, overwrite: bool) -> Pa
         )
     shutil.copy2(source, target)
     return target
+
+
+class _ProgressReporter:
+    def __init__(
+        self,
+        *,
+        total: int,
+        label: str,
+        callback: ProgressCallback | None,
+        interval: int,
+    ) -> None:
+        self.total = total
+        self.label = label
+        self.callback = callback
+        self.interval = max(1, min(100, interval))
+        self.next_percent = 0
+        self.last_percent: int | None = None
+
+    def start(self) -> None:
+        if self.total <= 0:
+            return
+        self._emit(0, 0)
+        self.next_percent = self.interval
+
+    def advance(self, completed: int) -> None:
+        if self.total <= 0:
+            return
+
+        percent = min(100, int(completed * 100 / self.total))
+        if completed == self.total or percent >= self.next_percent:
+            self._emit(percent, completed)
+            while self.next_percent <= percent:
+                self.next_percent += self.interval
+
+    def _emit(self, percent: int, completed: int) -> None:
+        if self.callback is None or self.last_percent == percent:
+            return
+        self.callback(f"{self.label}: {percent}% ({completed}/{self.total})")
+        self.last_percent = percent
 
 
 def _sequence_item(ds: Dataset | None, keyword: str, index: int) -> Dataset | None:

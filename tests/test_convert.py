@@ -11,6 +11,7 @@ from pydicom.uid import ExplicitVRLittleEndian, generate_uid
 from dicom_legacy_converter.convert import (
     ENHANCED_MR_IMAGE_STORAGE,
     MR_IMAGE_STORAGE,
+    convert_path,
     is_enhanced_mr,
     split_enhanced_mr_file,
 )
@@ -48,6 +49,27 @@ def test_is_enhanced_mr_accepts_sop_class(tmp_path: Path) -> None:
     ds = pydicom.dcmread(source)
 
     assert is_enhanced_mr(ds)
+
+
+def test_progress_callback_reports_sources_and_frames(tmp_path: Path) -> None:
+    source = tmp_path / "enhanced.dcm"
+    _write_synthetic_enhanced_mr(source, frame_count=10)
+    messages: list[str] = []
+
+    convert_path(
+        source,
+        tmp_path / "out",
+        progress=messages.append,
+        progress_interval=10,
+    )
+
+    assert "Found 1 source file(s)." in messages
+    assert "source files: 0% (0/1)" in messages
+    assert "source files: 100% (1/1)" in messages
+    assert "enhanced.dcm: decoding pixel data (10 frame(s))." in messages
+    assert "enhanced.dcm frames: 0% (0/10)" in messages
+    assert "enhanced.dcm frames: 10% (1/10)" in messages
+    assert "enhanced.dcm frames: 100% (10/10)" in messages
 
 
 def _write_synthetic_enhanced_mr(path: Path, *, frame_count: int) -> None:
