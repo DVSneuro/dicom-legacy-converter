@@ -75,6 +75,13 @@ dicom-legacy /path/to/scanner_export /path/to/output_dir --recursive --progress-
 dicom-legacy /path/to/scanner_export /path/to/output_dir --recursive --quiet
 ```
 
+Skipped files are summarized by reason instead of printed one-by-one. Use
+`--verbose` if you need a per-source skipped list:
+
+```bash
+dicom-legacy /path/to/scanner_export /path/to/output_dir --recursive --skip-bold --verbose
+```
+
 For a large scanner export, start with a dry run:
 
 ```bash

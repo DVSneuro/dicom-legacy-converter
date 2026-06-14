@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from collections import Counter
 from pathlib import Path
 
 from .convert import ConversionError, convert_path
@@ -78,6 +79,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Suppress progress updates",
     )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Print per-source skipped files instead of only a skipped summary",
+    )
     return parser
 
 
@@ -109,6 +115,7 @@ def main(argv: list[str] | None = None) -> int:
     output_count = 0
     would_write_count = 0
     skipped_count = 0
+    skipped_reasons: Counter[str] = Counter()
     for result in results:
         if result.converted:
             converted_count += 1
@@ -119,6 +126,7 @@ def main(argv: list[str] | None = None) -> int:
             would_write_count += 1
         else:
             skipped_count += 1
+            skipped_reasons[result.message] += 1
 
         if args.summary_only:
             continue
@@ -129,7 +137,14 @@ def main(argv: list[str] | None = None) -> int:
             status = "would convert"
         else:
             status = "skipped"
+            if not args.verbose:
+                continue
         print(f"{status}: {result.source} - {result.message}")
+
+    if skipped_reasons:
+        print("Skipped source summary:")
+        for reason, count in skipped_reasons.most_common():
+            print(f"  {count} source file(s): {reason}")
 
     if args.dry_run:
         print(

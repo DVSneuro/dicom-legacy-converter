@@ -151,6 +151,58 @@ def test_cli_dry_run_summary_only_suppresses_per_source_output(
     assert not (tmp_path / "out").exists()
 
 
+def test_cli_summarizes_skipped_sources_by_default(tmp_path: Path, capsys) -> None:
+    input_dir = tmp_path / "input"
+    input_dir.mkdir()
+    _write_synthetic_enhanced_mr(input_dir / "anat.dcm", frame_count=2)
+    _write_synthetic_enhanced_mr(
+        input_dir / "bold.dcm",
+        frame_count=2,
+        series_description="task BOLD",
+    )
+
+    exit_code = main(
+        [
+            str(input_dir),
+            str(tmp_path / "out"),
+            "--skip-bold",
+            "--quiet",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "converted:" in captured.out
+    assert "skipped:" not in captured.out
+    assert "Skipped source summary:" in captured.out
+    assert "1 source file(s): skipped likely BOLD/fMRI series" in captured.out
+
+
+def test_cli_verbose_prints_per_source_skipped_lines(tmp_path: Path, capsys) -> None:
+    input_dir = tmp_path / "input"
+    input_dir.mkdir()
+    _write_synthetic_enhanced_mr(
+        input_dir / "bold.dcm",
+        frame_count=2,
+        series_description="task BOLD",
+    )
+
+    exit_code = main(
+        [
+            str(input_dir),
+            str(tmp_path / "out"),
+            "--skip-bold",
+            "--quiet",
+            "--verbose",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "skipped:" in captured.out
+    assert "Skipped source summary:" in captured.out
+
+
 def _write_synthetic_enhanced_mr(
     path: Path,
     *,
