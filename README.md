@@ -148,6 +148,20 @@ For each frame it copies the pixel data and maps common per-frame metadata:
 The output keeps `StudyInstanceUID`, creates a new `SeriesInstanceUID`, and
 creates a new `SOPInstanceUID` for each single-frame DICOM.
 
+Output folders are named from readable source context when available:
+
+- DICOM `SeriesNumber`
+- DICOM `SeriesDescription`
+- DICOM `ProtocolName`
+- the original input parent folder name
+- a short source-specific suffix to avoid collisions
+
+For example, a converted T1 series may look like:
+
+```text
+3_T1_MPRAGE_anat_T1w_original_mprage_folder_1.2.3.4.5/
+```
+
 ## Known limitations
 
 - Only MR is targeted.

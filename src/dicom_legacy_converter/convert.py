@@ -36,12 +36,12 @@ METADATA_SCAN_KEYWORDS = (
     "Modality",
     "NumberOfFrames",
     "SeriesInstanceUID",
+    "SeriesNumber",
     "StudyDescription",
     "SeriesDescription",
     "ProtocolName",
     "SequenceName",
     "ImageType",
-    "SeriesNumber",
     "BodyPartExamined",
     "ScanningSequence",
     "SequenceVariant",
@@ -74,7 +74,9 @@ class _SourceRecord:
     enhanced_mr: bool
     frame_count: int
     series_uid: str
+    series_number: str
     series_description: str
+    output_folder_name: str
     metadata_text: str
 
 
@@ -194,7 +196,10 @@ def convert_path(
                         record.source,
                         False,
                         tuple(),
-                        f"would write {record.frame_count} classic MR instance(s)",
+                        (
+                            f"would write {record.frame_count} classic MR instance(s) "
+                            f"to {record.output_folder_name}"
+                        ),
                     )
                 )
                 source_progress.advance(index)
@@ -205,6 +210,7 @@ def convert_path(
                 ds,
                 record.source,
                 output_dir,
+                output_folder_name=record.output_folder_name,
                 overwrite=overwrite,
                 progress=progress,
                 progress_interval=progress_interval,
@@ -214,7 +220,10 @@ def convert_path(
                     record.source,
                     True,
                     tuple(files),
-                    f"wrote {len(files)} classic MR instance(s)",
+                    (
+                        f"wrote {len(files)} classic MR instance(s) "
+                        f"to {record.output_folder_name}"
+                    ),
                 )
             )
             source_progress.advance(index)
@@ -258,6 +267,7 @@ def split_enhanced_mr_file(
     force: bool = False,
     progress: ProgressCallback | None = None,
     progress_interval: int = 10,
+    output_folder_name: str | None = None,
 ) -> list[Path]:
     """Split one Enhanced MR file into classic single-frame MR DICOM files."""
 
@@ -267,6 +277,7 @@ def split_enhanced_mr_file(
         ds,
         source,
         Path(output_dir),
+        output_folder_name=output_folder_name,
         overwrite=overwrite,
         progress=progress,
         progress_interval=progress_interval,
@@ -278,6 +289,7 @@ def split_enhanced_mr_dataset(
     source: Path,
     output_dir: Path,
     *,
+    output_folder_name: str | None = None,
     overwrite: bool = False,
     progress: ProgressCallback | None = None,
     progress_interval: int = 10,
@@ -301,7 +313,9 @@ def split_enhanced_mr_dataset(
         ) from exc
 
     series_uid = generate_uid()
-    series_dir = output_dir / _series_folder_name(source)
+    series_dir = output_dir / (
+        output_folder_name or _series_folder_name(source, ds)
+    )
     series_dir.mkdir(parents=True, exist_ok=True)
 
     output_files: list[Path] = []
@@ -602,12 +616,15 @@ def _build_source_record(source: Path, ds: Dataset | None) -> _SourceRecord:
             enhanced_mr=False,
             frame_count=0,
             series_uid="",
+            series_number="",
             series_description="",
+            output_folder_name=_series_folder_name(source, None),
             metadata_text=str(source),
         )
 
     enhanced = is_enhanced_mr(ds)
     series_uid = str(ds.get("SeriesInstanceUID", "")) or str(source)
+    series_number = str(ds.get("SeriesNumber", ""))
     series_description = str(ds.get("SeriesDescription", ""))
     return _SourceRecord(
         source=source,
@@ -615,7 +632,9 @@ def _build_source_record(source: Path, ds: Dataset | None) -> _SourceRecord:
         enhanced_mr=enhanced,
         frame_count=_frame_count(ds) if enhanced else 1,
         series_uid=series_uid,
+        series_number=series_number,
         series_description=series_description,
+        output_folder_name=_series_folder_name(source, ds),
         metadata_text=_metadata_text(source, ds),
     )
 
@@ -679,16 +698,19 @@ def _report_enhanced_series_summary(
     )
 
     descriptions: dict[str, str] = {}
+    folder_names: dict[str, str] = {}
     for record in enhanced_records:
         descriptions.setdefault(record.series_uid, record.series_description)
+        folder_names.setdefault(record.series_uid, record.output_folder_name)
 
     largest = sorted(series_frames.items(), key=lambda item: item[1], reverse=True)[:10]
     for uid, frame_total in largest:
         description = descriptions.get(uid) or uid
+        folder_name = folder_names.get(uid) or uid
         progress(
             "series summary: "
             f"{description} - {series_sources.get(uid, 0)} source file(s), "
-            f"{frame_total} output frame(s)"
+            f"{frame_total} output frame(s), folder {folder_name}"
         )
 
 
@@ -820,10 +842,55 @@ def _frame_count(ds: Dataset) -> int:
         return 1
 
 
-def _series_folder_name(source: Path) -> str:
-    stem = source.stem or "converted"
-    safe = "".join(char if char.isalnum() or char in "-_." else "_" for char in stem)
-    return safe[:80] or "converted"
+def _series_folder_name(source: Path, ds: Dataset | None = None) -> str:
+    parts = [
+        str(ds.get("SeriesNumber", "")) if ds is not None else "",
+        str(ds.get("SeriesDescription", "")) if ds is not None else "",
+        str(ds.get("ProtocolName", "")) if ds is not None else "",
+        source.parent.name,
+    ]
+
+    folder_parts: list[str] = []
+    seen: set[str] = set()
+    for part in parts:
+        clean = _sanitize_path_component(part)
+        if not clean:
+            continue
+        key = clean.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        folder_parts.append(clean)
+
+    if not folder_parts:
+        folder_parts.append(_sanitize_path_component(source.stem) or "converted")
+
+    source_tail = _short_uid_tail(source.stem)
+    readable_name = "_".join(folder_parts)
+    if not source_tail or source_tail.casefold() in {part.casefold() for part in folder_parts}:
+        return readable_name[:160].rstrip("._-") or "converted"
+
+    max_length = 160
+    suffix = f"_{source_tail}"
+    prefix = readable_name[: max_length - len(suffix)].rstrip("._-")
+    folder_name = f"{prefix}{suffix}" if prefix else source_tail
+    return folder_name[:max_length].rstrip("._-") or "converted"
+
+
+def _sanitize_path_component(value: str) -> str:
+    value = value.strip()
+    if not value:
+        return ""
+    value = re.sub(r"[^A-Za-z0-9._-]+", "_", value)
+    value = re.sub(r"_+", "_", value)
+    return value.strip("._-")
+
+
+def _short_uid_tail(value: str) -> str:
+    clean = _sanitize_path_component(value)
+    if not clean:
+        return ""
+    return clean[-12:]
 
 
 def _truncate_long_string(value: str, max_length: int = 64) -> str:

@@ -44,6 +44,27 @@ def test_split_enhanced_mr_file_writes_classic_single_frame_instances(tmp_path: 
     assert np.array_equal(first.pixel_array, np.array([[0, 1], [2, 3]], dtype=np.uint16))
 
 
+def test_output_folder_name_preserves_source_context(tmp_path: Path) -> None:
+    input_dir = tmp_path / "original_mprage_folder"
+    input_dir.mkdir()
+    source = input_dir / "1.2.3.4.5.dcm"
+    _write_synthetic_enhanced_mr(
+        source,
+        frame_count=2,
+        series_number="3",
+        series_description="T1 MPRAGE",
+        protocol_name="anat_T1w",
+    )
+
+    output_files = split_enhanced_mr_file(source, tmp_path / "out")
+    folder_name = output_files[0].parent.name
+
+    assert "3" in folder_name
+    assert "T1_MPRAGE" in folder_name
+    assert "anat_T1w" in folder_name
+    assert "original_mprage_folder" in folder_name
+
+
 def test_is_enhanced_mr_accepts_sop_class(tmp_path: Path) -> None:
     source = tmp_path / "enhanced.dcm"
     _write_synthetic_enhanced_mr(source, frame_count=2)
@@ -135,6 +156,7 @@ def _write_synthetic_enhanced_mr(
     *,
     frame_count: int,
     series_uid: str | None = None,
+    series_number: str | None = None,
     series_description: str = "Synthetic T1",
     protocol_name: str | None = None,
 ) -> None:
@@ -157,6 +179,8 @@ def _write_synthetic_enhanced_mr(
     ds.Modality = "MR"
     ds.StudyDate = "20260613"
     ds.StudyTime = "120000"
+    if series_number is not None:
+        ds.SeriesNumber = series_number
     ds.SeriesDescription = series_description
     if protocol_name is not None:
         ds.ProtocolName = protocol_name
