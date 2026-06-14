@@ -23,12 +23,19 @@ The converter does not anonymize data.
 
 ## Install
 
-From this folder:
+This package is intended for a Linux or Linux-like shell environment, such as
+Linux, macOS Terminal, or Windows Subsystem for Linux. The commands below assume
+that `git`, `python3`, and `pip` are available.
+
+Clone the repository, enter it, create a virtual environment, and install the
+command-line tool:
 
 ```bash
+git clone https://github.com/DVSneuro/dicom-legacy-converter.git
+cd dicom-legacy-converter
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install -e ".[test]"
+python -m pip install -e .
 ```
 
 Activating the virtual environment is what puts the `dicom-legacy` command on
@@ -43,7 +50,41 @@ If your input DICOMs use compressed transfer syntaxes, install the pixel decoder
 plugins that match your scanner export, for example `pylibjpeg`,
 `pylibjpeg-libjpeg`, or `pylibjpeg-openjpeg`.
 
-## Use
+## Recommended Workflow
+
+For a large scanner export, start with a dry run. This scans the input and shows
+which Enhanced MR series would be converted without writing any output files:
+
+```bash
+dicom-legacy /path/to/scanner_export /path/to/output_dir --recursive --dry-run --summary-only
+```
+
+If the export contains task/rest fMRI, a cautious dry run is:
+
+```bash
+dicom-legacy /path/to/scanner_export /path/to/output_dir --recursive --dry-run --summary-only --skip-bold --max-series-frames 300
+```
+
+If the summary looks reasonable, run the real conversion into a fresh output
+directory:
+
+```bash
+dicom-legacy /path/to/scanner_export /path/to/output_dir --recursive --skip-bold --max-series-frames 300
+```
+
+If you only want structural images for clinical review, inspect the dry-run
+summary and consider excluding field maps or other non-diagnostic support
+series:
+
+```bash
+dicom-legacy /path/to/scanner_export /path/to/output_dir --recursive --skip-bold --max-series-frames 300 --exclude-regex "fmap|field[_ -]?mapping"
+```
+
+After conversion, open the output in a DICOM viewer and check patient/study
+identity, series identity, slice count, orientation, spacing, and image order
+before uploading for review.
+
+## Examples
 
 Convert one Enhanced MR file:
 
@@ -56,6 +97,35 @@ Convert every DICOM found under a folder:
 ```bash
 dicom-legacy /path/to/scanner_export /path/to/output_dir --recursive
 ```
+
+By default, existing output files are not overwritten:
+
+```bash
+dicom-legacy /path/to/enhanced_mr.dcm /path/to/output_dir --overwrite
+```
+
+You can also run the CLI as a Python module from the installed environment:
+
+```bash
+python -m dicom_legacy_converter /path/to/enhanced_mr.dcm /path/to/output_dir
+```
+
+## CLI Options
+
+| Option | Meaning |
+| --- | --- |
+| `--recursive` | Search all subfolders under the input directory. |
+| `--dry-run` | Scan inputs and report what would happen without writing files. |
+| `--summary-only` | With `--dry-run`, print aggregate summaries instead of per-source lines. |
+| `--skip-bold` | Skip likely BOLD/fMRI/rest/task series based on path and DICOM metadata. |
+| `--exclude-regex REGEX` | Skip sources whose path or selected DICOM metadata match a custom pattern. |
+| `--max-series-frames N` | Skip any original DICOM series that would produce more than `N` output files. |
+| `--overwrite` | Allow replacing existing output files. |
+| `--copy-single-frame` | Copy non-enhanced single-frame DICOMs into the output directory too. |
+| `--progress-interval PERCENT` | Report progress every `PERCENT` percent. Default is `10`. |
+| `--quiet` | Suppress progress updates. |
+| `--verbose` | Print per-source skipped files instead of only a skipped summary. |
+| `--force` | Pass `force=True` to `pydicom.dcmread` for non-standard files. |
 
 The CLI reports progress to stderr by default. It reports source-file progress
 and, for Enhanced MR files, frame-writing progress:
@@ -80,12 +150,6 @@ Skipped files are summarized by reason instead of printed one-by-one. Use
 
 ```bash
 dicom-legacy /path/to/scanner_export /path/to/output_dir --recursive --skip-bold --verbose
-```
-
-For a large scanner export, start with a dry run:
-
-```bash
-dicom-legacy /path/to/scanner_export /path/to/output_dir --recursive --dry-run --summary-only
 ```
 
 The dry run reports Enhanced MR source files grouped by original DICOM series.
@@ -117,22 +181,15 @@ For exports that contain task/rest fMRI, a cautious first conversion is:
 dicom-legacy /path/to/scanner_export /path/to/output_dir --recursive --skip-bold --max-series-frames 300
 ```
 
-By default, existing output files are not overwritten:
+## Developer Checks
+
+`pytest` runs the package's automated tests. It is for developers, maintainers,
+or anyone who wants to verify that the local installation works. You do not need
+to run `pytest` after each DICOM conversion.
 
 ```bash
-dicom-legacy /path/to/enhanced_mr.dcm /path/to/output_dir --overwrite
-```
-
-Run tests:
-
-```bash
+python -m pip install -e ".[test]"
 pytest
-```
-
-You can also run the CLI as a Python module from the installed environment:
-
-```bash
-python -m dicom_legacy_converter /path/to/enhanced_mr.dcm /path/to/output_dir
 ```
 
 ## What it converts
