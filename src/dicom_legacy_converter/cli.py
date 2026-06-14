@@ -43,6 +43,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Scan inputs and report what would be converted without writing files",
     )
     parser.add_argument(
+        "--summary-only",
+        action="store_true",
+        help="Print aggregate dry-run summary without per-source result lines",
+    )
+    parser.add_argument(
         "--skip-bold",
         action="store_true",
         help="Skip series whose path or metadata look like BOLD/fMRI/rest/task data",
@@ -79,6 +84,8 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.summary_only and not args.dry_run:
+        parser.error("--summary-only can only be used with --dry-run")
 
     try:
         results = convert_path(
@@ -100,10 +107,22 @@ def main(argv: list[str] | None = None) -> int:
 
     converted_count = 0
     output_count = 0
+    would_write_count = 0
+    skipped_count = 0
     for result in results:
         if result.converted:
             converted_count += 1
             output_count += len(result.output_files)
+        elif result.message.startswith("would write "):
+            would_write_count += 1
+        elif result.message.startswith("would copy "):
+            would_write_count += 1
+        else:
+            skipped_count += 1
+
+        if args.summary_only:
+            continue
+
         if result.converted:
             status = "converted"
         elif result.message.startswith("would "):
@@ -113,7 +132,12 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{status}: {result.source} - {result.message}")
 
     if args.dry_run:
-        print("Dry run complete. No files were written.")
+        print(
+            "Dry run complete. "
+            f"{would_write_count} source file(s) would be written/copied; "
+            f"{skipped_count} source file(s) would be skipped. "
+            "No files were written."
+        )
     else:
         print(
             f"Done. Converted {converted_count} source file(s) "

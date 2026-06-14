@@ -8,6 +8,7 @@ from pydicom.dataset import Dataset, FileDataset, FileMetaDataset
 from pydicom.sequence import Sequence
 from pydicom.uid import ExplicitVRLittleEndian, generate_uid
 
+from dicom_legacy_converter.cli import main
 from dicom_legacy_converter.convert import (
     ENHANCED_MR_IMAGE_STORAGE,
     MR_IMAGE_STORAGE,
@@ -109,6 +110,23 @@ def test_max_series_frames_skips_combined_original_series(tmp_path: Path) -> Non
     assert len(results) == 2
     assert all(not result.converted for result in results)
     assert all("skipped series with 12 output frame(s)" in result.message for result in results)
+    assert not (tmp_path / "out").exists()
+
+
+def test_cli_dry_run_summary_only_suppresses_per_source_output(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    source = tmp_path / "enhanced.dcm"
+    _write_synthetic_enhanced_mr(source, frame_count=4)
+
+    exit_code = main([str(source), str(tmp_path / "out"), "--dry-run", "--summary-only"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "Dry run complete." in captured.out
+    assert "would convert:" not in captured.out
+    assert "Detected 1 Enhanced MR source file(s)" in captured.err
     assert not (tmp_path / "out").exists()
 
 

@@ -31,6 +31,23 @@ ENHANCED_ONLY_KEYWORDS = (
     "RepresentativeFrameNumber",
 )
 
+METADATA_SCAN_KEYWORDS = (
+    "SOPClassUID",
+    "Modality",
+    "NumberOfFrames",
+    "SeriesInstanceUID",
+    "StudyDescription",
+    "SeriesDescription",
+    "ProtocolName",
+    "SequenceName",
+    "ImageType",
+    "SeriesNumber",
+    "BodyPartExamined",
+    "ScanningSequence",
+    "SequenceVariant",
+    "MRAcquisitionType",
+)
+
 ProgressCallback = Callable[[str], None]
 LIKELY_BOLD_PATTERN = re.compile(
     r"(^|[^a-z0-9])(bold|fmri|resting|rest|task|ep2d|mbep2d|sbref)([^a-z0-9]|$)",
@@ -721,7 +738,12 @@ def _read_dicom_or_none(
     stop_before_pixels: bool = False,
 ) -> Dataset | None:
     try:
-        return pydicom.dcmread(source, force=force, stop_before_pixels=stop_before_pixels)
+        return pydicom.dcmread(
+            source,
+            force=force,
+            stop_before_pixels=stop_before_pixels,
+            specific_tags=METADATA_SCAN_KEYWORDS if stop_before_pixels else None,
+        )
     except (InvalidDicomError, IsADirectoryError, PermissionError):
         return None
 

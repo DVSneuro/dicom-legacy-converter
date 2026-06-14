@@ -78,7 +78,7 @@ dicom-legacy /path/to/scanner_export /path/to/output_dir --recursive --quiet
 For a large scanner export, start with a dry run:
 
 ```bash
-dicom-legacy /path/to/scanner_export /path/to/output_dir --recursive --dry-run
+dicom-legacy /path/to/scanner_export /path/to/output_dir --recursive --dry-run --summary-only
 ```
 
 The dry run reports Enhanced MR source files grouped by original DICOM series.
@@ -102,6 +102,12 @@ single-frame output files:
 
 ```bash
 dicom-legacy /path/to/scanner_export /path/to/output_dir --recursive --max-series-frames 300
+```
+
+For exports that contain task/rest fMRI, a cautious first conversion is:
+
+```bash
+dicom-legacy /path/to/scanner_export /path/to/output_dir --recursive --skip-bold --max-series-frames 300
 ```
 
 By default, existing output files are not overwritten:
