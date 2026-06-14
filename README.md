@@ -27,7 +27,16 @@ From this folder:
 
 ```bash
 python3 -m venv .venv
-.venv/bin/python -m pip install -e ".[test]"
+source .venv/bin/activate
+python -m pip install -e ".[test]"
+```
+
+Activating the virtual environment is what puts the `dicom-legacy` command on
+your `PATH`. If you do not want to activate the environment, call the command
+through its full path instead:
+
+```bash
+.venv/bin/dicom-legacy --help
 ```
 
 If your input DICOMs use compressed transfer syntaxes, install the pixel decoder
@@ -58,6 +67,12 @@ Run tests:
 
 ```bash
 pytest
+```
+
+You can also run the CLI as a Python module from the installed environment:
+
+```bash
+python -m dicom_legacy_converter /path/to/enhanced_mr.dcm /path/to/output_dir
 ```
 
 ## What it converts
