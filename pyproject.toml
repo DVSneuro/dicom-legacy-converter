@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Convert Enhanced MR multi-frame DICOM objects into classic single-frame MR DICOM files."
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "MIT" }
+license = "MIT"
 authors = [
   { name = "CREST imaging team" }
 ]
@@ -27,4 +27,3 @@ dicom-legacy = "dicom_legacy_converter.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
-

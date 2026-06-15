@@ -35,7 +35,7 @@ git clone https://github.com/DVSneuro/dicom-legacy-converter.git
 cd dicom-legacy-converter
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install -e .
+python -m pip install .
 ```
 
 Activating the virtual environment is what puts the `dicom-legacy` command on
@@ -45,6 +45,19 @@ through its full path instead:
 ```bash
 .venv/bin/dicom-legacy --help
 ```
+
+If installation fails with an error like `could not create
+src/dicom_legacy_converter.egg-info: Permission denied`, the checkout is not
+writable by your user. The easiest fix is usually to clone a fresh copy into a
+directory you own. You can also check ownership with:
+
+```bash
+ls -ld . src
+```
+
+If the files are owned by another user, move the repo aside and clone it again
+as your own user. Avoid running `pip` with `sudo` inside the virtual
+environment.
 
 If your input DICOMs use compressed transfer syntaxes, install the pixel decoder
 plugins that match your scanner export, for example `pylibjpeg`,
